@@ -1,39 +1,3 @@
-/*
-TITOLO 0:
-Media: 0.032636
-Deviazione Standard: 7.7969%
-Varianza: 0.006079
-
-TITOLO 1:
-Media: -0.005556
-Deviazione Standard: 11.0732%
-Varianza: 0.012262
-
-INDICE 2:
-Media: 0.121867
-Deviazione Standard: 3.8900%
-Varianza: 0.001513
-
-INDICE 3:
-Media: -0.064207
-Deviazione Standard: 1.0689%
-Varianza: 0.000114
-
-=== COVARIANZE ===
-Covarianza Titolo 0 con Indice 0: 0.0010
-Covarianza Titolo 0 con Indice 1: 0.0003
-Covarianza Titolo 1 con Indice 0: -0.0011
-Covarianza Titolo 1 con Indice 1: -0.0001
-
-=== BETA E CORRELAZIONI ===
-
-Titolo 0:
-Con Indice 0 - Beta: 0.6516, Correlazione: 0.3251
-Con Indice 1 - Beta: 2.2942, Correlazione: 0.3145
-
-Titolo 1:
-Con Indice 0 - Beta: -0.7321, Correlazione: -0.2572
-Con Indice 1 - Beta: -1.2911, Correlazione: -0.1246*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <mpi.h>
@@ -214,6 +178,38 @@ void calculateVariances(float* returns, float* averages, float* variances, float
         stdDevs[row] = sqrtf(variances[row]);
     }
 }
+void calculateCovariances(float* returns, float* averages, float** covariances, int size, int rank) {
+    int block_size = ((INDEX) * (DAYS - 1)) / size;
+    int remainder = ((INDEX) * (DAYS - 1)) % size;
+
+    // Array per memorizzare i risultati locali e globali
+    float local_cov[TITLES][INDEX] = {0};
+    float global_cov[TITLES][INDEX] = {0};
+    
+    // Calcolo degli indici di inizio e fine per questo processo
+     int start_idx = rank * block_size;
+     int end_idx = (rank < size - 1) ?  start_idx + block_size :  start_idx + block_size + remainder;
+      for (int i = start_idx; i < end_idx; i++) {
+        // Determina l'indice e il giorno dalla posizione i
+        int index_col = i / (DAYS - 1);    // Determina quale indice
+        int day = i % (DAYS - 1);          // Determina il giorno
+
+        // Calcola la covarianza per tutti i titoli con questo indice
+        for (int title = 0; title < TITLES; title++) {
+            local_cov[title][index_col] += 
+                (returns[(title * (DAYS - 1)) + day] - averages[title]) *
+                (returns[((TITLES + index_col) * (DAYS - 1)) + day] - averages[TITLES + index_col]);
+        }
+    }
+
+    // Combina i risultati da tutti i processi
+    MPI_Allreduce(local_cov, global_cov, TITLES * INDEX, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+    for (int i = 0; i < TITLES; i++) {
+        for (int j = 0; j < INDEX; j++) {
+            covariances[i][j] = global_cov[i][j] / (float)(DAYS - 1);
+        }
+    }
+}
 /*
 void calculateCovariances(float* returns, float* averages, float** covariances, int size, int rank) {
     float local_cov[TITLES][INDEX] = {0};
@@ -241,6 +237,7 @@ void calculateCovariances(float* returns, float* averages, float** covariances, 
         }
     }
 }*/
+/*OKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
 void calculateCovariances(float* returns, float* averages, float** covariances, int size, int rank) {
     float local_cov[TITLES][INDEX] = {0};
     float global_cov[TITLES][INDEX] = {0};
@@ -272,7 +269,7 @@ void calculateCovariances(float* returns, float* averages, float** covariances, 
             covariances[i][j] = global_cov[i][j] / (float)(DAYS - 1);
         }
     }
-}
+}*/
 /*
 void calculateBetasAndCorrelations(float** covariances, float* variances, float* stdDevs, 
                                  float** betas, float** correlations, int size, int rank) {
@@ -287,8 +284,7 @@ void calculateBetasAndCorrelations(float** covariances, float* variances, float*
         }
     }
 }*/
-void calculateBetasAndCorrelations(float** covariances, float* variances, float* stdDevs, 
-                                 float** betas, float** correlations, int size, int rank) {
+void calculateBetasAndCorrelations(float** covariances, float* variances, float* stdDevs, float** betas, float** correlations, int size, int rank) {
 
     int block_size = (TITLES * INDEX) / size; 
     int remainder = (TITLES * INDEX) % size;
