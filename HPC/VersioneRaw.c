@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <mpi.h>
@@ -67,8 +66,8 @@ void calculateReturns(float* prices, float* returns, int size, int rank) {
     int block_size = (TITLES + INDEX) / size;
     int remainder = (TITLES + INDEX) % size;
 
-    int start_idx = rank * block_size;
-    int end_idx = (rank < size - 1) ? start_idx + block_size : start_idx + block_size + remainder;
+    int start_idx = rank * block_size + (rank < remainder ? rank : remainder);
+    int end_idx = start_idx + block_size + (rank < remainder ? 1 : 0);
 
     for (int row = start_idx; row < end_idx; row++) {
         for (int day = 0; day < (DAYS - 1); day++) {
@@ -78,10 +77,10 @@ void calculateReturns(float* prices, float* returns, int size, int rank) {
 }
 
 void calculateAverages(float* returns, float* averages, int size, int rank) {
-    int block_size = ((TITLES + INDEX)) / size;
-    int remainder = ((TITLES + INDEX)) % size;
-    int start_idx = rank * block_size;
-    int end_idx = (rank < size - 1) ? start_idx + block_size : start_idx + block_size + remainder;
+    int block_size = (TITLES + INDEX) / size;
+    int remainder = (TITLES + INDEX) % size;
+    int start_idx = rank * block_size + (rank < remainder ? rank : remainder);
+    int end_idx = start_idx + block_size + (rank < remainder ? 1 : 0);
 
     for (int row = start_idx; row < end_idx; row++) {
         averages[row] = 0.0f;
@@ -93,10 +92,11 @@ void calculateAverages(float* returns, float* averages, int size, int rank) {
 }
 
 void calculateVariances(float* returns, float* averages, float* variances, float* stdDevs, int size, int rank) {
-    int block_size = ((TITLES + INDEX)) / size;
-    int remainder = ((TITLES + INDEX)) % size;
-    int start_idx = rank * block_size;
-    int end_idx = (rank < size - 1) ? start_idx + block_size : start_idx + block_size + remainder;
+    int block_size = (TITLES + INDEX) / size;
+    int remainder = (TITLES + INDEX) % size;
+
+    int start_idx = rank * block_size + (rank < remainder ? rank : remainder);
+    int end_idx = start_idx + block_size + (rank < remainder ? 1 : 0);
 
     for (int row = start_idx; row < end_idx; row++) {
         variances[row] = 0;
@@ -107,21 +107,20 @@ void calculateVariances(float* returns, float* averages, float* variances, float
         stdDevs[row] = sqrtf(variances[row]);
     }
 }
+
 void calculateCovariances(float* returns, float* averages, float** covariances, int size, int rank) {
     float local_cov[TITLES][INDEX] = {0};
     float global_cov[TITLES][INDEX] = {0};
     
-    // Calcolare il numero di colonne da trattare per ciascun processo
     int block_size = (DAYS - 1) / size;
     int remainder = (DAYS - 1) % size;
-    int start_idx = rank * block_size;
-    int end_idx = (rank < size - 1) ? start_idx + block_size : start_idx + block_size + remainder;
 
-    // Distribuire per colonne (giorni)
+    int start_idx = rank * block_size + (rank < remainder ? rank : remainder);
+    int end_idx = start_idx + block_size + (rank < remainder ? 1 : 0);
+
     for (int day = start_idx; day < end_idx; day++) {
         for (int title = 0; title < TITLES; title++) {
             for (int idx = 0; idx < INDEX; idx++) {
-                // Calcolo della covarianza per titolo e indice
                 local_cov[title][idx] += 
                     (returns[title * (DAYS - 1) + day] - averages[title]) *
                     (returns[(TITLES + idx) * (DAYS - 1) + day] - averages[TITLES + idx]);
@@ -129,16 +128,36 @@ void calculateCovariances(float* returns, float* averages, float** covariances, 
         }
     }
 
-    // Sommare i risultati usando MPI_Allreduce
     MPI_Allreduce(&local_cov, &global_cov, TITLES * INDEX, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
 
-    // Calcolare la covarianza media per ogni coppia
     for (int i = 0; i < TITLES; i++) {
         for (int j = 0; j < INDEX; j++) {
             covariances[i][j] = global_cov[i][j] / (float)(DAYS - 1);
         }
     }
 }
+
+void printResults(FinancialData* data, int rank) {
+    if (rank == 0) {
+        printf("\n=== ANALISI DEI RENDIMENTI FINANZIARI ===\n");
+
+        for (int i = 0; i < TITLES + INDEX; i++) {
+            printf("\n%s %d:\n", (i < TITLES) ? "TITOLO" : "INDICE", i);
+            printf("Media: %f\n", data->averages[i]);
+            printf("Deviazione Standard: %.4f%%\n", data->stdDevs[i] * 100);
+            printf("Varianza: %f\n", data->variances[i]);
+        }
+
+        printf("\n=== COVARIANZE ===\n");
+        for (int i = 0; i < TITLES; i++) {
+            for (int j = 0; j < INDEX; j++) {
+                printf("Covarianza Titolo %d con Indice %d: %.4f\n", i, j, data->covariances[i][j]);
+            }
+        }
+    }
+}
+
+
 int main(int argc, char* argv[]) {
     int size, rank;
     MPI_Init(&argc, &argv);
@@ -147,7 +166,6 @@ int main(int argc, char* argv[]) {
 
     double begin, end;
 
-    // Initialize financial data structure
     FinancialData data = {
         .prices = (float*)malloc((TITLES + INDEX) * DAYS * sizeof(float)),
         .returns = (float*)malloc((TITLES + INDEX) * (DAYS - 1) * sizeof(float)),
@@ -159,7 +177,6 @@ int main(int argc, char* argv[]) {
         .correlations = (float**)malloc(TITLES * sizeof(float*))
     };
 
-    // Check for allocation failures
     if (!data.prices || !data.returns || !data.averages || !data.variances || !data.stdDevs || 
         !data.covariances || !data.betas || !data.correlations) {
         fprintf(stderr, "Memory allocation failed\n");
@@ -168,7 +185,6 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    // Allocate 2D arrays
     for (int i = 0; i < TITLES; i++) {
         data.covariances[i] = (float*)malloc(INDEX * sizeof(float));
         data.betas[i] = (float*)malloc(INDEX * sizeof(float));
@@ -189,56 +205,61 @@ int main(int argc, char* argv[]) {
 
     begin = MPI_Wtime();
 
-    // Calculate returns
     calculateReturns(data.prices, data.returns, size, rank);
     calculateAverages(data.returns, data.averages, size, rank);
     calculateVariances(data.returns, data.averages, data.variances, data.stdDevs, size, rank);
 
-    // Gather results to rank 0
-    MPI_Allgather(data.returns + rank * (DAYS - 1), (DAYS - 1), MPI_FLOAT,  data.returns, (DAYS - 1), MPI_FLOAT, MPI_COMM_WORLD);
-    MPI_Allgather(data.averages + rank, 1, MPI_FLOAT,  data.averages, 1, MPI_FLOAT, MPI_COMM_WORLD);
-    MPI_Allgather(data.variances + rank, 1, MPI_FLOAT,   data.variances, 1, MPI_FLOAT, MPI_COMM_WORLD);
-    MPI_Allgather(data.stdDevs + rank, 1, MPI_FLOAT, data.stdDevs, 1, MPI_FLOAT, MPI_COMM_WORLD);
+    int total_rows = TITLES + INDEX;
+    int block_size = total_rows / size;
+    int remainder = total_rows % size;
+    int my_count = block_size + (rank < remainder ? 1 : 0);
 
-    //MPI_Bcast(data.returns, (TITLES + INDEX) * (DAYS - 1), MPI_FLOAT, 0, MPI_COMM_WORLD);
-    //MPI_Bcast(data.averages, (TITLES + INDEX), MPI_FLOAT, 0, MPI_COMM_WORLD);
+    int recvcounts[size];
+    int displs[size];
+
+    MPI_Allgather(&my_count, 1, MPI_INT, recvcounts, 1, MPI_INT, MPI_COMM_WORLD);
+
+    displs[0] = 0;
+    for (int i = 1; i < size; i++) {
+        displs[i] = displs[i - 1] + recvcounts[i - 1];
+    }
+
+    int send_offset = (rank * block_size + (rank < remainder ? rank : remainder));
+
+    int* recvcounts_returns = (int*)malloc(size * sizeof(int));
+    int* displs_returns = (int*)malloc(size * sizeof(int));
+
+    for (int i = 0; i < size; i++) {
+        recvcounts_returns[i] = recvcounts[i] * (DAYS - 1);
+        displs_returns[i] = displs[i] * (DAYS - 1);
+    }
+
+    MPI_Allgatherv(data.returns + send_offset * (DAYS - 1), my_count * (DAYS - 1), MPI_FLOAT,
+                   data.returns, recvcounts_returns, displs_returns, MPI_FLOAT, MPI_COMM_WORLD);
+
+    MPI_Allgatherv(data.averages + send_offset, my_count, MPI_FLOAT,
+                   data.averages, recvcounts, displs, MPI_FLOAT, MPI_COMM_WORLD);
+
+    MPI_Allgatherv(data.variances + send_offset, my_count, MPI_FLOAT,
+                   data.variances, recvcounts, displs, MPI_FLOAT, MPI_COMM_WORLD);
+
+    MPI_Allgatherv(data.stdDevs + send_offset, my_count, MPI_FLOAT,
+                   data.stdDevs, recvcounts, displs, MPI_FLOAT, MPI_COMM_WORLD);
+
 
     calculateCovariances(data.returns, data.averages, data.covariances, size, rank);
+
+    end = MPI_Wtime();
     if (rank == 0) {
-    // Stampa i ritorni
-    printf("Returns after Gather:\n");
-    for (int i = 0; i < (TITLES + INDEX) * (DAYS - 1); i++) {
-        printf("Return[%d] = %f\n", i, data.returns[i]);
+        printf("Tempo di esecuzione: %f secondi\n", end - begin);
     }
 
-    // Stampa le medie
-    printf("Averages after Gather:\n");
-    for (int i = 0; i < (TITLES + INDEX); i++) {
-        printf("Average[%d] = %f\n", i, data.averages[i]);
-    }
-    
-    // Stampa le varianze
-    printf("Variances after Gather:\n");
-    for (int i = 0; i < (TITLES + INDEX); i++) {
-        printf("Variance[%d] = %f\n", i, data.variances[i]);
-    }
+    printResults(&data, rank);
 
-    // Stampa le deviazioni standard
-    printf("Standard Deviations after Gather:\n");
-    for (int i = 0; i < (TITLES + INDEX); i++) {
-        printf("StdDev[%d] = %f\n", i, data.stdDevs[i]);
-    }
-
-    // Stampa le covarianze
-    printf("\nCovariances:\n");
-    for (int i = 0; i < TITLES; i++) {
-        for (int j = 0; j < INDEX; j++) {
-            printf("Covariance[%d][%d] = %f\n", i, j, data.covariances[i][j]);
-        }
-    }
-    }
-    // Cleanup
     cleanupFinancialData(&data);
+    free(recvcounts_returns);
+    free(displs_returns);
+
     MPI_Finalize();
     return 0;
 }
