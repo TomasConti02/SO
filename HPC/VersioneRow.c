@@ -20,6 +20,8 @@ typedef struct {
 } FinancialData;
 float local_cov[TITLES][INDEX] = {0};
 float global_cov[TITLES][INDEX] = {0};
+float beta_local[TITLES][INDEX] = {0};
+float correlation_local[TITLES][INDEX] = {0};
 
 void initializeData(float* prices) {
     float valori_titolo_0[] = {100, 110, 120, 110, 120, 130, 120, 130, 140, 130};
@@ -158,6 +160,36 @@ void printResults(FinancialData* data, int rank) {
     }
 }
 
+void calculateBetasAndCorrelations(float** covariances, float* variances, float* stdDevs, float** betas, float** correlations, int size, int rank) {
+    int block_size = (TITLES * INDEX) / size;
+    int remainder = (TITLES * INDEX) % size;
+    int start_idx = rank * block_size;
+    int end_idx = (rank < size - 1) ? start_idx + block_size : start_idx + block_size + remainder;
+
+    // Calculate betas and correlations for this process's block
+    for (int i = start_idx; i < end_idx; i++) {
+        int title = i / INDEX;
+        int idx = i % INDEX;
+        
+        if (variances[TITLES + idx] != 0) {
+            beta_local[title][idx] = covariances[title][idx] / variances[TITLES + idx];
+            correlation_local[title][idx] = covariances[title][idx] / (stdDevs[TITLES + idx] * stdDevs[title]);
+            
+            // Print local results for this process
+            printf("Rank %d: Beta[%d][%d] = %f, Correlation[%d][%d] = %f\n", 
+                   rank, title, idx, beta_local[title][idx], title, idx, correlation_local[title][idx]);
+        }
+    }
+
+    // Directly assign local calculations to output matrices
+    for (int i = start_idx; i < end_idx; i++) {
+        int title = i / INDEX;
+        int idx = i % INDEX;
+        
+        betas[title][idx] = beta_local[title][idx];
+        correlations[title][idx] = correlation_local[title][idx];
+    }
+}
 
 int main(int argc, char* argv[]) {
     int size, rank;
@@ -244,6 +276,8 @@ int main(int argc, char* argv[]) {
 
 
     calculateCovariances(data.returns, data.averages, data.covariances, size, rank);
+    calculateBetasAndCorrelations(data.covariances, data.variances, data.stdDevs, data.betas, data.correlations, size, rank);
+
 
     end = MPI_Wtime();
     if (rank == 0) {
