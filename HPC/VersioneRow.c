@@ -18,6 +18,8 @@ typedef struct {
     float** betas;
     float** correlations;
 } FinancialData;
+float local_cov[TITLES][INDEX] = {0};
+float global_cov[TITLES][INDEX] = {0};
 
 void initializeData(float* prices) {
     float valori_titolo_0[] = {100, 110, 120, 110, 120, 130, 120, 130, 140, 130};
@@ -109,9 +111,8 @@ void calculateVariances(float* returns, float* averages, float* variances, float
 }
 
 void calculateCovariances(float* returns, float* averages, float** covariances, int size, int rank) {
-    float local_cov[TITLES][INDEX] = {0};
-    float global_cov[TITLES][INDEX] = {0};
-    
+    //float local_cov[TITLES][INDEX] = {0};
+    //float global_cov[TITLES][INDEX] = {0};
     int block_size = (DAYS - 1) / size;
     int remainder = (DAYS - 1) % size;
 
@@ -176,6 +177,8 @@ int main(int argc, char* argv[]) {
         .betas = (float**)malloc(TITLES * sizeof(float*)),
         .correlations = (float**)malloc(TITLES * sizeof(float*))
     };
+    float local_cov[TITLES][INDEX] = {0};
+    float global_cov[TITLES][INDEX] = {0};
 
     if (!data.prices || !data.returns || !data.averages || !data.variances || !data.stdDevs || 
         !data.covariances || !data.betas || !data.correlations) {
@@ -234,17 +237,10 @@ int main(int argc, char* argv[]) {
         displs_returns[i] = displs[i] * (DAYS - 1);
     }
 
-    MPI_Allgatherv(data.returns + send_offset * (DAYS - 1), my_count * (DAYS - 1), MPI_FLOAT,
-                   data.returns, recvcounts_returns, displs_returns, MPI_FLOAT, MPI_COMM_WORLD);
-
-    MPI_Allgatherv(data.averages + send_offset, my_count, MPI_FLOAT,
-                   data.averages, recvcounts, displs, MPI_FLOAT, MPI_COMM_WORLD);
-
-    MPI_Allgatherv(data.variances + send_offset, my_count, MPI_FLOAT,
-                   data.variances, recvcounts, displs, MPI_FLOAT, MPI_COMM_WORLD);
-
-    MPI_Allgatherv(data.stdDevs + send_offset, my_count, MPI_FLOAT,
-                   data.stdDevs, recvcounts, displs, MPI_FLOAT, MPI_COMM_WORLD);
+    MPI_Allgatherv(data.returns + send_offset * (DAYS - 1), my_count * (DAYS - 1), MPI_FLOAT, data.returns, recvcounts_returns, displs_returns, MPI_FLOAT, MPI_COMM_WORLD);
+    MPI_Allgatherv(data.averages + send_offset, my_count, MPI_FLOAT, data.averages, recvcounts, displs, MPI_FLOAT, MPI_COMM_WORLD);
+    MPI_Allgatherv(data.variances + send_offset, my_count, MPI_FLOAT, data.variances, recvcounts, displs, MPI_FLOAT, MPI_COMM_WORLD);
+    MPI_Allgatherv(data.stdDevs + send_offset, my_count, MPI_FLOAT, data.stdDevs, recvcounts, displs, MPI_FLOAT, MPI_COMM_WORLD);
 
 
     calculateCovariances(data.returns, data.averages, data.covariances, size, rank);
