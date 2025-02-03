@@ -18,7 +18,16 @@ typedef struct {
     float** betas;
     float** correlations;
 } FinancialData;
-
+float local_var[TITLES + INDEX] = {0};
+float global_var[TITLES + INDEX] = {0};
+float local_cov[TITLES][INDEX] = {0};
+float global_cov[TITLES][INDEX] = {0};
+float beta_local[TITLES][INDEX] = {0};
+float correlation_local[TITLES][INDEX] = {0};
+float beta_global[TITLES][INDEX] = {0};
+float correlation_global[TITLES][INDEX] = {0};
+float local_sum[TITLES + INDEX] = {0};
+float global_sum[TITLES + INDEX] = {0};
 // Function prototypes
 void initializeData(float* prices);
 void calculateReturns(float* prices, float* returns, int size, int rank);
@@ -138,8 +147,9 @@ void calculateReturns(float* prices, float* returns, int size, int rank) {
    // MPI_Gatherv(returns + start_idx, end_idx - start_idx, MPI_FLOAT, returns, recv_counts, displs, MPI_FLOAT, 0, MPI_COMM_WORLD);
 }
 void calculateAverages(float* returns, float* averages, int size, int rank) {
-    float local_sum[TITLES + INDEX] = {0};
-    float global_sum[TITLES + INDEX] = {0};
+    //float local_sum[TITLES + INDEX] = {0};
+    //float global_sum[TITLES + INDEX] = {0};
+
     int block_size = ((TITLES + INDEX) * (DAYS - 1)) / size;
     int remainder = ((TITLES + INDEX) * (DAYS - 1)) % size;
     int start_idx = rank * block_size;
@@ -158,8 +168,9 @@ void calculateAverages(float* returns, float* averages, int size, int rank) {
 }
 
 void calculateVariances(float* returns, float* averages, float* variances, float* stdDevs, int size, int rank) {
-    float local_var[TITLES + INDEX] = {0};
-    float global_var[TITLES + INDEX] = {0};
+    //float local_var[TITLES + INDEX] = {0};
+    //float global_var[TITLES + INDEX] = {0};
+
     int block_size = ((TITLES + INDEX) * (DAYS - 1)) / size;
     int remainder = ((TITLES + INDEX) * (DAYS - 1)) % size;
     int start_idx = rank * block_size;
@@ -183,8 +194,8 @@ void calculateCovariances(float* returns, float* averages, float** covariances, 
     int remainder = ((INDEX) * (DAYS - 1)) % size;
 
     // Array per memorizzare i risultati locali e globali
-    float local_cov[TITLES][INDEX] = {0};
-    float global_cov[TITLES][INDEX] = {0};
+    //float local_cov[TITLES][INDEX] = {0};
+    //float global_cov[TITLES][INDEX] = {0};
     
     // Calcolo degli indici di inizio e fine per questo processo
      int start_idx = rank * block_size;
@@ -293,10 +304,10 @@ void calculateBetasAndCorrelations(float** covariances, float* variances, float*
     int end_idx = (rank < size - 1) ? start_idx + block_size : start_idx + block_size + remainder;
 
     // Inizializza array locali
-    float beta_local[TITLES][INDEX] = {0};
-    float correlation_local[TITLES][INDEX] = {0};
-    float beta_global[TITLES][INDEX] = {0};
-    float correlation_global[TITLES][INDEX] = {0};
+    //float beta_local[TITLES][INDEX] = {0};
+    //float correlation_local[TITLES][INDEX] = {0};
+    //float beta_global[TITLES][INDEX] = {0};
+    //float correlation_global[TITLES][INDEX] = {0};
 
     // Calcolo parallelo di Beta e Correlazione solo per il blocco assegnato
     for (int i = start_idx; i < end_idx; i++) {
