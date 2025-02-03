@@ -174,10 +174,8 @@ void calculateBetasAndCorrelations(float** covariances, float* variances, float*
         if (variances[TITLES + idx] != 0) {
             beta_local[title][idx] = covariances[title][idx] / variances[TITLES + idx];
             correlation_local[title][idx] = covariances[title][idx] / (stdDevs[TITLES + idx] * stdDevs[title]);
-            
             // Print local results for this process
-            printf("Rank %d: Beta[%d][%d] = %f, Correlation[%d][%d] = %f\n", 
-                   rank, title, idx, beta_local[title][idx], title, idx, correlation_local[title][idx]);
+           // printf("Rank %d: Beta[%d][%d] = %f, Correlation[%d][%d] = %f\n", rank, title, idx, beta_local[title][idx], title, idx, correlation_local[title][idx]);
         }
     }
 
@@ -197,7 +195,7 @@ int main(int argc, char* argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    double begin, end;
+    double begin, end, global_elaps, local_elaps;
 
     FinancialData data = {
         .prices = (float*)malloc((TITLES + INDEX) * DAYS * sizeof(float)),
@@ -237,7 +235,6 @@ int main(int argc, char* argv[]) {
         initializeData(data.prices);
     }
     MPI_Bcast(data.prices, (TITLES + INDEX) * DAYS, MPI_FLOAT, 0, MPI_COMM_WORLD);
-
     begin = MPI_Wtime();
 
     calculateReturns(data.prices, data.returns, size, rank);
@@ -279,13 +276,17 @@ int main(int argc, char* argv[]) {
     calculateBetasAndCorrelations(data.covariances, data.variances, data.stdDevs, data.betas, data.correlations, size, rank);
 
 
+    MPI_Barrier(MPI_COMM_WORLD);
     end = MPI_Wtime();
+    local_elaps = end - begin;
+    MPI_Reduce(&local_elaps, &global_elaps, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     if (rank == 0) {
-        printf("Tempo di esecuzione: %f secondi\n", end - begin);
+        printf("Number of processes: %d\n", size);
+        printf("Execution time: %f seconds\n", global_elaps);
+        printf("Input size: %d elements\n", (TITLES + INDEX) * DAYS);
+        printf("Memory used: %lu MB\n", ((TITLES + INDEX) * DAYS * sizeof(float)) / (1024 * 1024));
     }
-
-    printResults(&data, rank);
-
+    //printResults(&data, rank);
     cleanupFinancialData(&data);
     free(recvcounts_returns);
     free(displs_returns);
