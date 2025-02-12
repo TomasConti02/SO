@@ -1,22 +1,31 @@
-//mpiicc -qopenmp -o hybrid_program FINE.c -lm
+//mpicc -O3 -fopenmp -o financial_parallel financial_parallel.c -lm
+//mpirun -np 4 ./financial_parallel
 /*
 #!/bin/bash
 #SBATCH --account=tra24_IngInfB2
 #SBATCH --partition=g100_usr_prod
-#SBATCH --nodes=2                     # numero di nodi
-#SBATCH --ntasks-per-node=4           # 4 processi MPI per nodo
-#SBATCH --cpus-per-task=4             # 4 thread OpenMP per processo MPI
+#SBATCH --nodes=2                     
+#SBATCH --ntasks-per-node=4           
+#SBATCH --cpus-per-task=4             
 #SBATCH -o TEST2_Strong.out
 #SBATCH -e TEST2_Strong.err
 
-# Carica il modulo Intel MPI
+# Carica i moduli necessari
 module load autoload intelmpi
 
-# Imposta il numero di thread OpenMP
+# Configurazione OpenMP
 export OMP_NUM_THREADS=4
+export OMP_PLACES=cores
+export OMP_PROC_BIND=close
 
-# Esegui il programma
-srun ./hybrid_program
+# Configurazione Intel MPI
+export I_MPI_PIN_DOMAIN=auto
+export I_MPI_PIN_ORDER=compact
+export I_MPI_DEBUG=5  # Per debugging delle assegnazioni
+
+# Esegui con statistiche dettagliate
+srun --cpu-bind=cores ./hybrid_program
+
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,20 +71,23 @@ void cleanupFinancialData(FinancialData* data) {
         }
     }
 }
-
 void initializeData(float* prices) {
-    srand(time(NULL));
-    #pragma omp parallel for collapse(2)
-    for (int i = 0; i < TITLES + INDEX; i++) {
-        for (int j = 0; j < DAYS; j++) {
-            float base_price = 50 + (rand() % 151);
-            prices[i * DAYS + j] = base_price + ((float)rand() / RAND_MAX);
+    unsigned int seed = time(NULL);
+    #pragma omp parallel
+    {
+        unsigned int local_seed = seed + omp_get_thread_num();
+        #pragma omp for collapse(2) schedule(static)
+        for (int i = 0; i < TITLES + INDEX; i++) {
+            for (int j = 0; j < DAYS; j++) {
+                float base_price = 50 + (rand_r(&local_seed) % 151);
+                prices[i * DAYS + j] = base_price + ((float)rand_r(&local_seed) / RAND_MAX);
+            }
         }
     }
 }
 
 void calculateReturns(float* prices, float* returns, int local_size, int rank) {
-    #pragma omp parallel for collapse(2)
+    #pragma omp parallel for collapse(2) schedule(guided)
     for (int row = 0; row < local_size; row++) {
         for (int day = 0; day < (DAYS - 1); day++) {
             returns[row * (DAYS - 1) + day] = (prices[row * DAYS + day + 1] - prices[row * DAYS + day]) / prices[row * DAYS + day];
@@ -84,27 +96,31 @@ void calculateReturns(float* prices, float* returns, int local_size, int rank) {
 }
 
 void calculateAverages(float* returns, float* averages, int local_size, int rank) {
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided)
     for (int row = 0; row < local_size; row++) {
-        float local_sum = 0.0f;
-        #pragma omp simd reduction(+:local_sum)
+        float sum = 0.0f;
+        #pragma omp simd reduction(+:sum)
         for (int day = 0; day < (DAYS - 1); day++) {
-            local_sum += returns[row * (DAYS - 1) + day];
+            sum += returns[row * (DAYS - 1) + day];
         }
-        averages[row] = local_sum / (DAYS - 1);
+        averages[row] = sum / (DAYS - 1);
     }
 }
 
 void calculateVariances(float* returns, float* averages, float* variances, float* stdDevs, int local_size, int rank) {
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(guided)
     for (int row = 0; row < local_size; row++) {
-        float local_variance = 0.0f;
-        #pragma omp simd reduction(+:local_variance)
+        float variance = 0.0f;
+        float avg = averages[row];
+        
+        #pragma omp simd reduction(+:variance)
         for (int day = 0; day < (DAYS - 1); day++) {
-            float diff = returns[row * (DAYS - 1) + day] - averages[row];
-            local_variance += diff * diff;
+            float diff = returns[row * (DAYS - 1) + day] - avg;
+            variance += diff * diff;
         }
-        variances[row] = local_variance / (float)(DAYS - 1);
+        
+        variances[row] = variance / (DAYS - 1);
+        stdDevs[row] = sqrtf(variances[row]);
     }
 }
 
@@ -115,16 +131,22 @@ void calculateCovariances(float* returns, float* averages, float* covariances, i
     int index_end_idx = index_start_idx + index_block_size + (rank < index_remainder ? 1 : 0);
     int local_index_size = index_end_idx - index_start_idx;
 
-    #pragma omp parallel for collapse(2)
-    for (int i = 0; i < local_index_size; i++) {
-        for (int t = 0; t < TITLES; t++) {
-            float sum = 0.0f;
-            #pragma omp simd reduction(+:sum)
-            for (int d = 0; d < DAYS - 1; d++) {
-                sum += (returns[t * (DAYS - 1) + d] - averages[t]) * 
-                      (returns[(TITLES + index_start_idx + i) * (DAYS - 1) + d] - averages[TITLES + index_start_idx + i]);
+    #pragma omp parallel
+    {
+        #pragma omp for collapse(2) schedule(guided)
+        for (int i = 0; i < local_index_size; i++) {
+            for (int t = 0; t < TITLES; t++) {
+                float sum = 0.0f;
+                float avg_t = averages[t];
+                float avg_i = averages[TITLES + index_start_idx + i];
+                
+                #pragma omp simd reduction(+:sum)
+                for (int d = 0; d < DAYS - 1; d++) {
+                    sum += (returns[t * (DAYS - 1) + d] - avg_t) * 
+                          (returns[(TITLES + index_start_idx + i) * (DAYS - 1) + d] - avg_i);
+                }
+                local_cov[i * TITLES + t] = sum / (DAYS - 1);
             }
-            local_cov[i * TITLES + t] = sum / (DAYS - 1);
         }
     }
     
@@ -139,30 +161,26 @@ void calculateBetasAndCorrelations(float* covariances, float* variances, float**
     int start_idx = rank * block_size + (rank < remainder ? rank : remainder);
     int end_idx = start_idx + block_size + (rank < remainder ? 1 : 0);
     
-    const float epsilon = 1e-7;
+    const float epsilon = 1e-7f;
     
-    #pragma omp parallel for collapse(2)
+    #pragma omp parallel for collapse(2) schedule(guided)
     for (int title = 0; title < TITLES; title++) {
         for (int idx = 0; idx < INDEX; idx++) {
             int i = title * INDEX + idx;
             if (i >= start_idx && i < end_idx) {
-                if (fabsf(variances[TITLES + idx]) > epsilon) {
-                    betas[title][idx] = covariances[title + idx * TITLES] / variances[TITLES + idx];
-                } else {
-                    betas[title][idx] = 0.0f;
-                }
+                float var_idx = variances[TITLES + idx];
+                float var_title = variances[title];
+                float covar = covariances[title + idx * TITLES];
                 
-                if (fabsf(variances[TITLES + idx]) > epsilon && fabsf(variances[title]) > epsilon) {
-                    correlations[title][idx] = covariances[title + idx * TITLES] / 
-                                             (sqrtf(variances[TITLES + idx]) * sqrtf(variances[title]));
-                } else {
-                    correlations[title][idx] = 0.0f;
-                }
+                betas[title][idx] = (fabsf(var_idx) > epsilon) ? 
+                    covar / var_idx : 0.0f;
+                
+                correlations[title][idx] = (fabsf(var_idx) > epsilon && fabsf(var_title) > epsilon) ?
+                    covar / (sqrtf(var_idx) * sqrtf(var_title)) : 0.0f;
             }
         }
     }
 }
-
 int main(int argc, char* argv[]) {
     int provided;
     MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &provided);
