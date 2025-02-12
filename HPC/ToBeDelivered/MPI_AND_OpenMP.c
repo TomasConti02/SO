@@ -40,7 +40,6 @@ typedef struct {
     float** correlations;
 } FinancialData;
 
-// Add the missing cleanup function
 void cleanupFinancialData(FinancialData* data) {
     if (data) {
         if (data->prices) free(data->prices);
@@ -66,6 +65,7 @@ void cleanupFinancialData(FinancialData* data) {
 
 void initializeData(float* prices) {
     srand(time(NULL));
+    #pragma omp parallel for collapse(2)
     for (int i = 0; i < TITLES + INDEX; i++) {
         for (int j = 0; j < DAYS; j++) {
             float base_price = 50 + (rand() % 151);
@@ -87,6 +87,7 @@ void calculateAverages(float* returns, float* averages, int local_size, int rank
     #pragma omp parallel for
     for (int row = 0; row < local_size; row++) {
         float local_sum = 0.0f;
+        #pragma omp simd reduction(+:local_sum)
         for (int day = 0; day < (DAYS - 1); day++) {
             local_sum += returns[row * (DAYS - 1) + day];
         }
@@ -98,6 +99,7 @@ void calculateVariances(float* returns, float* averages, float* variances, float
     #pragma omp parallel for
     for (int row = 0; row < local_size; row++) {
         float local_variance = 0.0f;
+        #pragma omp simd reduction(+:local_variance)
         for (int day = 0; day < (DAYS - 1); day++) {
             float diff = returns[row * (DAYS - 1) + day] - averages[row];
             local_variance += diff * diff;
@@ -117,6 +119,7 @@ void calculateCovariances(float* returns, float* averages, float* covariances, i
     for (int i = 0; i < local_index_size; i++) {
         for (int t = 0; t < TITLES; t++) {
             float sum = 0.0f;
+            #pragma omp simd reduction(+:sum)
             for (int d = 0; d < DAYS - 1; d++) {
                 sum += (returns[t * (DAYS - 1) + d] - averages[t]) * 
                       (returns[(TITLES + index_start_idx + i) * (DAYS - 1) + d] - averages[TITLES + index_start_idx + i]);
@@ -157,55 +160,6 @@ void calculateBetasAndCorrelations(float* covariances, float* variances, float**
                 }
             }
         }
-    }
-}
-
-// Print functions remain the same as in your original code
-void printPrices(float* prices, int rank) {
-    if (rank == 0) {
-        printf("Prices:\n");
-        for (int i = 0; i < TITLES + INDEX; i++) {
-            printf("Asset %d: ", i);
-            for (int j = 0; j < DAYS; j++) {
-                printf("%.2f ", prices[i * DAYS + j]);
-            }
-            printf("\n");
-        }
-        printf("\n");
-    }
-}
-
-void printReturns(float* returns, int rank) {
-    if (rank == 0) {
-        printf("Returns:\n");
-        for (int i = 0; i < TITLES + INDEX; i++) {
-            printf("Asset %d: ", i);
-            for (int j = 0; j < DAYS - 1; j++) {
-                printf("%.6f ", returns[i * (DAYS - 1) + j]);
-            }
-            printf("\n");
-        }
-        printf("\n");
-    }
-}
-
-void printAverages(float* averages, int rank) {
-    if (rank == 0) {
-        printf("Averages:\n");
-        for (int i = 0; i < TITLES + INDEX; i++) {
-            printf("Asset %d: %.6f\n", i, averages[i]);
-        }
-        printf("\n");
-    }
-}
-
-void printVariancesAndStdDevs(float* variances, float* stdDevs, int rank) {
-    if (rank == 0) {
-        printf("Variances and Standard Deviations:\n");
-        for (int i = 0; i < TITLES + INDEX; i++) {
-            printf("Asset %d: Variance = %.6f\n", i, variances[i]);
-        }
-        printf("\n");
     }
 }
 
@@ -342,9 +296,6 @@ int main(int argc, char* argv[]) {
     // Start timing
     begin = MPI_Wtime();
 
-    // Print initial prices
-   // printPrices(data.prices, rank);
-
     // Calculate returns, averages, and variances using OpenMP within each MPI process
     calculateReturns(data.prices + start_idx * DAYS, localReturns, local_size, rank);
     calculateAverages(localReturns, localAverage, local_size, rank);
@@ -358,19 +309,8 @@ int main(int argc, char* argv[]) {
     MPI_Allgatherv(localVariance, local_size, MPI_FLOAT,
                    data.variances, sendcounts_other, displs_other, MPI_FLOAT, MPI_COMM_WORLD);
 
-    // Print intermediate results
-    //printReturns(data.returns, rank);
-    //printAverages(data.averages, rank);
-    //printVariancesAndStdDevs(data.variances, data.stdDevs, rank);
-
-    // Synchronize before covariance calculation
-    //MPI_Barrier(MPI_COMM_WORLD);
-
     // Calculate covariances using hybrid parallelization
     calculateCovariances(data.returns, data.averages, data.covariances, size, rank, recvcounts, displs, local_cov);
-
-    // Synchronize before final calculations
-   // MPI_Barrier(MPI_COMM_WORLD);
 
     // Calculate betas and correlations
     calculateBetasAndCorrelations(data.covariances, data.variances, data.betas, data.correlations, size, rank);
@@ -390,7 +330,7 @@ int main(int argc, char* argv[]) {
         printf("Memory used: %lu MB\n", ((TITLES + INDEX) * DAYS * sizeof(float)) / (1024 * 1024));
     }
 
-    // Cleanup
+   // Cleanup
     free(local_cov);
     free(sendcounts_returns);
     free(sendcounts_other);
