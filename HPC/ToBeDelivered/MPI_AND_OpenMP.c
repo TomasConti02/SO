@@ -1,3 +1,23 @@
+//mpiicc -qopenmp -o hybrid_program FINE.c -lm
+/*
+#!/bin/bash
+#SBATCH --account=tra24_IngInfB2
+#SBATCH --partition=g100_usr_prod
+#SBATCH --nodes=2                     # numero di nodi
+#SBATCH --ntasks-per-node=4           # 4 processi MPI per nodo
+#SBATCH --cpus-per-task=4             # 4 thread OpenMP per processo MPI
+#SBATCH -o TEST2_Strong.out
+#SBATCH -e TEST2_Strong.err
+
+# Carica il modulo Intel MPI
+module load autoload intelmpi
+
+# Imposta il numero di thread OpenMP
+export OMP_NUM_THREADS=4
+
+# Esegui il programma
+srun ./hybrid_program
+*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <mpi.h>
